@@ -9,7 +9,7 @@ async fn failure_to_connect_due_to_no_listener() {
     let addr = target_address.parse::<SocketAddr>().unwrap();
     let s = Socket::connect(addr).await;
     match s {
-        Err(Error::ConnectionError) => (),
+        Err(Error::IoError(std::io::Error { .. })) => (),
         Err(err) => panic!("Unexpected error: {:?}", err),
         Ok(socket) => {
             socket.close();
