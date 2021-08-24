@@ -1,6 +1,5 @@
 #[cfg(test)]
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use zfx_socket::active::Listener;
@@ -9,7 +8,6 @@ use zfx_socket::Error;
 
 #[derive(Debug, Clone)]
 enum TestMessage {
-    Connect,
     Send,
     Response,
 }
@@ -27,7 +25,7 @@ impl TestServer {
         let listener = Listener::bind(addr).await.unwrap();
 
         tokio::spawn(async move {
-            let mut raw_socket = match listener.accept().await {
+            let raw_socket = match listener.accept().await {
                 Err(err) => panic!("Listener accept failure due to: {:?}", err),
                 Ok(socket) => socket,
             };
@@ -60,6 +58,10 @@ impl TestServer {
             receive_rx,
         }
     }
+
+    fn send(&self) {
+        self.send_tx.try_send(TestMessage::Send).unwrap();
+    }
 }
 
 #[tokio::test]
@@ -83,7 +85,7 @@ async fn simple_server_client_success() {
     let addr = target_address.parse::<SocketAddr>().unwrap();
 
     let mut server = TestServer::new(&addr).await;
-    let mut client = Socket::connect(&addr).await.unwrap();
+    let client = Socket::connect(&addr).await.unwrap();
 
     assert_eq!((), client.try_send());
 
@@ -92,5 +94,11 @@ async fn simple_server_client_success() {
         unexpected => panic!("unexpected message: {:?}", unexpected),
     }
 
-    assert!(true);
+    let mut client_receive = client.subscribe();
+    server.send();
+
+    match client_receive.recv().await {
+        Ok(string) => assert_eq!(String::from("msg"), string),
+        unexpected => panic!("unexpected message from server to client: {:?}", unexpected),
+    }
 }
