@@ -72,8 +72,7 @@ async fn failure_to_connect_due_to_no_listener() {
     match s {
         Err(Error::IoError(std::io::Error { .. })) => (),
         Err(err) => panic!("Unexpected error: {:?}", err),
-        Ok(socket) => {
-            socket.close();
+        Ok(_socket) => {
             panic!("Socket shouldn't be able to ");
         }
     }
@@ -100,5 +99,25 @@ async fn simple_server_client_success() {
     match client_receive.recv().await {
         Ok(string) => assert_eq!(String::from("msg"), string),
         unexpected => panic!("unexpected message from server to client: {:?}", unexpected),
+    }
+}
+
+#[tokio::test]
+#[should_panic]
+async fn simple_connection_lifetime() {
+    let target_address = "127.0.0.1:9092";
+    let addr = target_address.parse::<SocketAddr>().unwrap();
+
+    let server = TestServer::new(&addr).await;
+    let client = Socket::connect(&addr).await.unwrap();
+
+    drop(server);
+
+    assert_eq!(client.try_send(), ());
+
+    match client.send().await {
+        Ok(reply) => panic!("Unexpected reply: {:?}", reply),
+        Err(Error::IoError(_)) => (),
+        Err(unexpected) => panic!("Unexpected error: {:?}", unexpected),
     }
 }

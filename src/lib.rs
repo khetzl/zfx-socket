@@ -3,9 +3,10 @@ pub mod prelude;
 
 #[derive(Debug)]
 pub enum Error {
-    HandlerReceiveError,
-    HandlerError,
     IoError(std::io::Error),
+    UnexpectedMsg,
+    SocketWriteError,
+    SocketSendHandlerDropped(tokio::sync::oneshot::error::RecvError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
