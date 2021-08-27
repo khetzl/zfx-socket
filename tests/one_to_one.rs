@@ -1,15 +1,19 @@
 #[cfg(test)]
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
+use zfx_socket::active::IncomingMsg;
 use zfx_socket::active::Listener;
 use zfx_socket::active::Socket;
 use zfx_socket::Error;
 
+const MSGBOX: usize = 1024;
+
 #[derive(Debug, Clone)]
 enum TestMessage {
     Send,
-    Response,
+    Response { msg: IncomingMsg },
 }
 
 struct TestServer {
@@ -19,8 +23,8 @@ struct TestServer {
 
 impl TestServer {
     async fn new(addr: &SocketAddr) -> TestServer {
-        let (send_tx, mut send_rx) = mpsc::channel(32); //FIXME: channel size?
-        let (receive_tx, receive_rx) = broadcast::channel(32); //FIXME: channel size?
+        let (send_tx, mut send_rx) = mpsc::channel(MSGBOX); //FIXME: channel size?
+        let (receive_tx, receive_rx) = broadcast::channel(MSGBOX); //FIXME: channel size?
 
         let listener = Listener::bind(addr).await.unwrap();
 
@@ -37,8 +41,11 @@ impl TestServer {
                 loop {
                     match listener_receive_rx.recv().await {
                         Ok(_msg) => {
-                            receive_tx.send(TestMessage::Response).unwrap();
-                            ()
+                            let buf = [0u8; 32];
+                            let a = IncomingMsg::Msg {
+                                msg: Arc::new(buf.to_vec()),
+                            };
+                            receive_tx.send(TestMessage::Response { msg: a }).unwrap();
                         }
                         Err(err) => panic!("Socket hung up: {:?}", err),
                     }
@@ -47,7 +54,7 @@ impl TestServer {
 
             loop {
                 match send_rx.recv().await {
-                    Some(TestMessage::Send) => raw_socket.try_send(),
+                    Some(TestMessage::Send) => raw_socket.try_send(b"server-origin message"),
                     _ => panic!("unexpected msg"),
                 }
             }
@@ -86,10 +93,10 @@ async fn simple_server_client_success() {
     let mut server = TestServer::new(&addr).await;
     let client = Socket::connect(&addr).await.unwrap();
 
-    assert_eq!((), client.try_send());
+    assert_eq!((), client.try_send(b"client-origin message"));
 
     match server.receive_rx.recv().await {
-        Ok(TestMessage::Response) => (),
+        Ok(TestMessage::Response { msg: _ }) => (),
         unexpected => panic!("unexpected message: {:?}", unexpected),
     }
 
@@ -97,7 +104,10 @@ async fn simple_server_client_success() {
     server.send();
 
     match client_receive.recv().await {
-        Ok(string) => assert_eq!(String::from("msg"), string),
+        Ok(IncomingMsg::Msg { msg }) => match Arc::try_unwrap(msg) {
+            Ok(payload) => assert_eq!(payload.as_slice(), b"server-origin message"),
+            Err(err) => panic!("unexpected error: {:?}", err),
+        },
         unexpected => panic!("unexpected message from server to client: {:?}", unexpected),
     }
 }
@@ -113,9 +123,9 @@ async fn simple_connection_lifetime() {
 
     drop(server);
 
-    assert_eq!(client.try_send(), ());
+    assert_eq!(client.try_send(b"sendpanictest"), ());
 
-    match client.send().await {
+    match client.send(b"clientmsg").await {
         Ok(reply) => panic!("Unexpected reply: {:?}", reply),
         Err(Error::IoError(_)) => (),
         Err(unexpected) => panic!("Unexpected error: {:?}", unexpected),

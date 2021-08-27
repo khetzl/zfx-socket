@@ -1,25 +1,25 @@
 use crate::prelude::*;
 pub use crate::{Error, Result};
-use tokio::io::AsyncReadExt;
-use tokio::io::ReadHalf;
-use tokio::io::WriteHalf;
-//use tokio::select;
 
 const MSGBOX: usize = 1024;
 
 #[derive(Debug)]
 enum SocketHandlerMsg {
     TrySend {
-        msg: String,
+        msg: Arc<Vec<u8>>,
     },
     Send {
-        msg: String,
+        msg: Arc<Vec<u8>>,
         reply_tx: oneshot::Sender<Result<()>>,
     },
     Close,
 }
 
-pub type IncomingMsg = String;
+#[derive(Debug, Clone)]
+pub enum IncomingMsg {
+    Msg { msg: Arc<Vec<u8>> },
+}
+//pub type IncomingMsg = String;
 
 #[derive(Debug)]
 pub struct Socket {
@@ -36,19 +36,19 @@ impl Socket {
         start_stream(stream)
     }
 
-    pub fn try_send(&self) {
+    pub fn try_send(&self, msg: &[u8]) {
         self.send_tx
             .try_send(SocketHandlerMsg::TrySend {
-                msg: String::from("msg"),
+                msg: Arc::new(msg.to_vec()),
             })
             .unwrap();
     }
 
-    pub async fn send(&self) -> Result<()> {
+    pub async fn send(&self, msg: &[u8]) -> Result<()> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.send_tx
             .send(SocketHandlerMsg::Send {
-                msg: String::from("sendmsg"),
+                msg: Arc::new(msg.to_vec()),
                 reply_tx,
             })
             .await
@@ -119,15 +119,12 @@ async fn send_handler(mut w: WriteHalf<TcpStream>, mut send_rx: mpsc::Receiver<S
     loop {
         match send_rx.recv().await {
             Some(SocketHandlerMsg::TrySend { msg }) => {
-                //let string = String::from("msg");
-                let buf = msg.as_bytes();
-                if let Err(err) = w.write(&buf).await {
+                if let Err(err) = w.write(&msg).await {
                     eprintln!("failed to write to socket: {:?}", err);
                 }
             }
             Some(SocketHandlerMsg::Send { msg, reply_tx }) => {
-                let buf = msg.as_bytes();
-                let reply = match w.write(&buf).await {
+                let reply = match w.write(&msg).await {
                     Ok(_) => Ok(()),
                     Err(err) => Err(Error::IoError(err)),
                 };
@@ -158,8 +155,17 @@ async fn receive_handler(
 }
 
 async fn read_and_fw(r: &mut ReadHalf<TcpStream>, receive_tx: &broadcast::Sender<IncomingMsg>) {
-    let mut buf = [0u8; 32];
-    r.read(&mut buf).await.unwrap();
-    //        println!("{:?}", std::str::from_utf8(&buf));
-    receive_tx.send(String::from("msg")).unwrap(); // FIXME: handle error?
+    let mut buf = BytesMut::with_capacity(1024);
+    match r.read_buf(&mut buf).await {
+        Ok(0) => (),
+        Ok(_) => {
+            let payload = buf.to_vec();
+            receive_tx
+                .send(IncomingMsg::Msg {
+                    msg: Arc::new(payload),
+                })
+                .unwrap(); // FIXME: handle error?
+        }
+        Err(_) => return (),
+    }
 }

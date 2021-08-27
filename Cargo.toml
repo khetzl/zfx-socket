@@ -8,3 +8,4 @@ edition = "2018"
 [dependencies]
 tokio = { version = "1.9.0", features = ["full"] }
 rand = { version = "0.8.4" }
+bytes = { version = "1.1.0" }
