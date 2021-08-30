@@ -40,12 +40,8 @@ impl TestServer {
                 // Listener forward loop
                 loop {
                     match listener_receive_rx.recv().await {
-                        Ok(_msg) => {
-                            let buf = [0u8; 32];
-                            let a = IncomingMsg::Msg {
-                                msg: Arc::new(buf.to_vec()),
-                            };
-                            receive_tx.send(TestMessage::Response { msg: a }).unwrap();
+                        Ok(msg) => {
+                            receive_tx.send(TestMessage::Response { msg }).unwrap();
                         }
                         Err(err) => panic!("Socket hung up: {:?}", err),
                     }
